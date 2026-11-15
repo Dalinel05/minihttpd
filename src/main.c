@@ -4,6 +4,10 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <errno.h>
+
+#define MAX_EVENTOS 20
 
 int main(void) {
 
@@ -63,10 +67,73 @@ int main(void) {
         return 1;
     }
 
-    // Aquí continuaremos con el bucle de eventos
+    // 14. Crear un arreglo para almacenar eventos
+    struct epoll_event eventos[MAX_EVENTOS] = {0};
 
-    close(epfd);
-    close(sd);
+    // 15. Informar que el servidor está esperando eventos
+    printf("MiniHTTPd: esperando conexiones en el puerto 8080...\n");
 
-    return 0;
+
+    // 16. Iniciar el bucle principal del servidor
+    while (1) {
+
+        // 17. Esperar eventos
+        int num_eventos = epoll_wait(epfd, eventos, MAX_EVENTOS, -1);
+
+        // 18. Comprobar errores
+        if (num_eventos == -1) {
+
+            // Si fue interrumpido por una señal, reintentar
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("epoll_wait");
+            close(epfd);
+            close(sd);
+            return 1;
+        }
+
+        // 19. Recorrer los eventos recibidos
+        for (int i = 0; i < num_eventos; i++) {
+
+            // 20. Comprobar si el evento pertenece
+            //     al socket de escucha
+            if (eventos[i].data.fd == sd) {
+
+                // 21. Aceptar todas las conexiones
+                //     pendientes de este evento
+                while (1) {
+
+                    int cliente = accept(sd, NULL, NULL);
+
+                    // 22. Comprobar errores de accept
+                    if (cliente == -1) {
+
+                        // Ya no quedan conexiones pendientes
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            break;
+                        }
+
+                        // La llamada fue interrumpida
+                        if (errno == EINTR) {
+                            continue;
+                        }
+
+                        perror("accept");
+                        close(epfd);
+                        close(sd);
+                        return 1;
+                    }
+
+                    // 23. Mostrar el descriptor del cliente
+                    printf("Cliente aceptado: descriptor %d\n", cliente);
+
+                    // 24. Por ahora cerrar la conexión
+                    close(cliente);
+                }
+            }
+        }
+    }
+
 }
