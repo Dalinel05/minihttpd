@@ -201,11 +201,34 @@ int main(void) {
                         size_t disponibles =MAX_CABECERAS - estado->usados;
                         
                         if (disponibles == 0) {
-                            printf("Cliente %d: solicitud demasiado grande\n",cliente_fd);
-                            cerrar_cliente = 1;
+
+                            char descarte[2048];
+                            for (int i = 0; i < 8; i++) {ssize_t n = recv(cliente_fd, descarte, sizeof(descarte), 0);
+                                if (n <= 0) break;
+                            }
+                            estado->mantener_conexion = 0;
+                            estado->usados = http_construir_respuesta(estado->buffer,sizeof(estado->buffer),HTTP_BAD_REQUEST,0,"text/plain; charset=utf-8",0);
+                            if (estado->usados == 0) {
+                                cerrar_cliente = 1;
+                                break;
+                            }
+
+                            estado->enviados = 0;
+                            estado->respondiendo = 1;
+
+                            struct epoll_event ev_error = {0};
+                            ev_error.events = EPOLLOUT;
+                            ev_error.data.ptr = estado;
+
+                            if (epoll_ctl(epfd, EPOLL_CTL_MOD, cliente_fd, &ev_error) == -1) {
+                                perror("epoll_ctl error HTTP");
+                                cerrar_cliente = 1;
+                            } else {
+                                printf("[Cliente %d] Solicitud demasiado grande -> 400 Bad Request\n",
+                                    cliente_fd);
+                            }
                             break;
-                        }
-                        
+                        }                        
                         ssize_t bytes = recv(cliente_fd,estado->buffer + estado->usados,disponibles,0);
                         if (bytes > 0) {
                             
