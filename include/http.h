@@ -28,5 +28,5 @@ typedef struct {
 } HttpSolicitud;
 
 int http_analizar_solicitud(const char *datos,size_t longitud,HttpSolicitud *solicitud);
-size_t http_construir_respuesta(char *destino,size_t capacidad,int codigo,off_t tamano_contenido,const char *tipo_mime);
+size_t http_construir_respuesta(char *destino,size_t capacidad,int codigo,off_t tamano_contenido,const char *tipo_mime,int mantener_conexion);
 #endif

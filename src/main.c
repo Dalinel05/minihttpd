@@ -10,12 +10,13 @@
 #include "files.h"
 #include "mime.h"
 #include <sys/sendfile.h>
+#include <strings.h>
 
 #define MAX_EVENTOS 20
 #define MAX_CABECERAS 8192
 
 
-typedef struct {int fd;size_t usados;size_t enviados;int respondiendo;char buffer[MAX_CABECERAS];int fd_archivo;off_t tamano_archivo;off_t enviados_archivo;} EstadoCliente;
+typedef struct {int fd;size_t usados;size_t enviados;int respondiendo;char buffer[MAX_CABECERAS];int fd_archivo;off_t tamano_archivo;off_t enviados_archivo;int mantener_conexion;} EstadoCliente;
 
 int main(void) {
     
@@ -53,8 +54,7 @@ int main(void) {
     // Preparar el arreglo de eventos
     struct epoll_event eventos[MAX_EVENTOS] = {0};
 
-    printf("MiniHTTPd: esperando conexiones en el puerto 8080...\n");
-    
+    printf("MiniHTTPd: esperando conexiones en el puerto 8080...\n\n");
     while (1) {
         int num_eventos = epoll_wait(epfd,eventos,MAX_EVENTOS,-1);
         
@@ -86,7 +86,6 @@ int main(void) {
                         perror("accept");
                         break;
                     }
-                    printf("Cliente aceptado: descriptor %d\n",cliente);
                     // Configurar el cliente como no bloqueante
                     int flags_cliente = fcntl(cliente,F_GETFL,0);
                     if (flags_cliente == -1 ||fcntl(cliente, F_SETFL,flags_cliente | O_NONBLOCK) == -1) {
@@ -115,7 +114,6 @@ int main(void) {
                         free(estado);
                         continue;
                     }
-                    printf("Cliente registrado en epoll: %d\n",cliente);
                 }
             } else {
                 
@@ -165,9 +163,36 @@ int main(void) {
                             cerrar_cliente = 1;
                             break;
                         }
-                        if (estado->enviados_archivo == estado->tamano_archivo) {
+
+                    if (!cerrar_cliente &&
+                        estado->enviados_archivo == estado->tamano_archivo) {
+
+                        if (estado->mantener_conexion) {
+
+                            if (estado->fd_archivo != -1) {
+                                close(estado->fd_archivo);
+                                estado->fd_archivo = -1;
+                            }
+                            estado->usados = 0;
+                            estado->enviados = 0;
+                            estado->respondiendo = 0;
+                            estado->tamano_archivo = 0;
+                            estado->enviados_archivo = 0;
+                            estado->mantener_conexion = 0;
+                            struct epoll_event ev_lectura = {0};
+
+                            ev_lectura.events = EPOLLIN;
+                            ev_lectura.data.ptr = estado;
+                            if (epoll_ctl(epfd, EPOLL_CTL_MOD,
+                                        cliente_fd, &ev_lectura) == -1) {
+                                perror("epoll_ctl keep-alive");
+                                cerrar_cliente = 1;
+                            }
+                        } else {
                             cerrar_cliente = 1;
                         }
+                    }
+
                     }
 
                 } else {
@@ -185,7 +210,6 @@ int main(void) {
                         if (bytes > 0) {
                             
                             estado->usados += (size_t)bytes;
-                            printf("Cliente %d: %zu bytes acumulados\n",cliente_fd,estado->usados);
                             // Buscar el final de los encabezados
                             int completa = 0;
                             for (size_t j = 0; j + 3 < estado->usados;j++) {
@@ -194,37 +218,68 @@ int main(void) {
                                     break;
                                 }
                             }
-                            // Comprobar si los encabezados están completos
                             if (completa) {
-                                printf("Solicitud HTTP completa del cliente %d:\n",cliente_fd);
-                                fwrite(estado->buffer,1,estado->usados,stdout);
-                                putchar('\n');
-
-                                HttpSolicitud solicitud;
+                                char primera_linea[512];
+                                size_t j = 0;
+                                while (j < estado->usados &&j < sizeof(primera_linea) - 1 && estado->buffer[j] != '\r' && estado->buffer[j] != '\n') {
+                                    primera_linea[j] = estado->buffer[j];
+                                    j++;
+                                }
+                                primera_linea[j] = '\0';
+                                char metodo[16] = "?";
+                                char ruta_log[256] = "?";
+                                sscanf(primera_linea, "%15s %255s", metodo, ruta_log);
+                                HttpSolicitud solicitud = {0};
                                 int codigo_http = http_analizar_solicitud(estado->buffer, estado->usados, &solicitud);
+                                estado->mantener_conexion = 0;
 
+                                if (codigo_http == HTTP_OK) {
+                                    if (strcasecmp(solicitud.connection, "close") != 0) {
+                                        estado->mantener_conexion = 1;
+                                    }
+                                }
                                 const char *tipo_mime = "application/octet-stream";
-
-                                printf("Resultado del analisis HTTP: %d\n", codigo_http);
 
                                 if (codigo_http == HTTP_OK) {
                                     int fd_archivo;
                                     off_t tamano_archivo;
                                     codigo_http = files_abrir(solicitud.ruta, &fd_archivo, &tamano_archivo);
                                     if (codigo_http == HTTP_OK) {
-                                        printf("Archivo encontrado: %s\n", solicitud.ruta);
-                                        printf("Tamano del archivo: %lld bytes\n", (long long)tamano_archivo);
                                         estado->fd_archivo = fd_archivo;
                                         estado->tamano_archivo = tamano_archivo;
                                         estado->enviados_archivo = 0;
-                                        
+
                                         tipo_mime = mime_tipo(solicitud.ruta);
-                                        printf("Tipo MIME detectado: %s\n", tipo_mime);
                                     }
                                 }
-                                printf("Codigo de respuesta HTTP: %d\n", codigo_http);
-
-                                size_t longitud_respuesta = http_construir_respuesta(estado->buffer, sizeof(estado->buffer), codigo_http, codigo_http == HTTP_OK ? estado->tamano_archivo : 0, tipo_mime);
+                                
+                                const char *mensaje_estado;
+                                switch (codigo_http) {
+                                    case HTTP_OK:
+                                        mensaje_estado = "OK";
+                                        break;
+                                    case HTTP_BAD_REQUEST:
+                                        mensaje_estado = "Bad Request";
+                                        break;
+                                    case HTTP_FORBIDDEN:
+                                        mensaje_estado = "Forbidden";
+                                        break;
+                                    case HTTP_NOT_FOUND:
+                                        mensaje_estado = "Not Found";
+                                        break;
+                                    case HTTP_METHOD_NOT_ALLOWED:
+                                        mensaje_estado = "Method Not Allowed";
+                                        break;
+                                    case HTTP_INTERNAL_ERROR:
+                                        mensaje_estado = "Internal Server Error";
+                                        break;
+                                    default:
+                                        mensaje_estado = "Error";
+                                        break;
+                                }
+                                printf("[Cliente %d] %s %s -> %d %s\n",cliente_fd,metodo,ruta_log,codigo_http,mensaje_estado);
+                                
+                                size_t longitud_respuesta = http_construir_respuesta(estado->buffer,sizeof(estado->buffer),codigo_http,codigo_http == HTTP_OK ? estado->tamano_archivo : 0,tipo_mime,estado->mantener_conexion);
                                 if (longitud_respuesta == 0) {
                                     cerrar_cliente = 1;
                                     break;
@@ -243,8 +298,6 @@ int main(void) {
                             }
                             continue;// Continuar leyendo si hay datos disponibles
                         } else if (bytes == 0) {
-                            
-                            printf("Cliente %d desconectado\n",cliente_fd);
                             cerrar_cliente = 1;
                             break;
                         } else {

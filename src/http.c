@@ -140,7 +140,7 @@ int http_analizar_solicitud(const char *datos,size_t longitud,HttpSolicitud *sol
     return HTTP_BAD_REQUEST; // Solicitud incompleta o mal formada
 }
 // Construir una respuesta HTTP
-size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo, off_t tamano_contenido, const char *tipo_mime) {
+size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo, off_t tamano_contenido, const char *tipo_mime,int mantener_conexion) {
     if (destino == NULL || capacidad == 0) {
         return 0;
     }
@@ -177,13 +177,14 @@ size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo, off
         "HTTP/1.1 %d %s\r\n"
         "Content-Type: %s\r\n"
         "Content-Length: %lld\r\n"
-        "Connection: close\r\n"
+        "Connection: %s\r\n"
         "%s"
         "\r\n",
         codigo,
         mensaje,
         tipo,
         (long long)tamano_contenido,
+        mantener_conexion ? "keep-alive" : "close",
         allow
     );
 
