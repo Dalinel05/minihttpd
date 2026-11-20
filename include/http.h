@@ -1,6 +1,7 @@
 #ifndef HTTP_H
 #define HTTP_H
 #include <stddef.h>
+#include <sys/types.h>
 
 #define HTTP_MAX_METODO 16
 #define HTTP_MAX_RUTA 2048
@@ -27,6 +28,5 @@ typedef struct {
 } HttpSolicitud;
 
 int http_analizar_solicitud(const char *datos,size_t longitud,HttpSolicitud *solicitud);
-size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo);
-
+size_t http_construir_respuesta(char *destino,size_t capacidad,int codigo,off_t tamano_contenido,const char *tipo_mime);
 #endif

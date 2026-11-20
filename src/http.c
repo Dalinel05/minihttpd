@@ -140,7 +140,7 @@ int http_analizar_solicitud(const char *datos,size_t longitud,HttpSolicitud *sol
     return HTTP_BAD_REQUEST; // Solicitud incompleta o mal formada
 }
 // Construir una respuesta HTTP
-size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo) {
+size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo, off_t tamano_contenido, const char *tipo_mime) {
     if (destino == NULL || capacidad == 0) {
         return 0;
     }
@@ -170,16 +170,20 @@ size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo) {
             break;
     }
     const char *allow = (codigo == HTTP_METHOD_NOT_ALLOWED) ? "Allow: GET\r\n" : "";
+    const char *tipo = (codigo == HTTP_OK && tipo_mime != NULL) ? tipo_mime : "text/plain; charset=utf-8";
     int escritos = snprintf(
         destino,
         capacidad,
         "HTTP/1.1 %d %s\r\n"
-        "Content-Length: 0\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %lld\r\n"
         "Connection: close\r\n"
         "%s"
         "\r\n",
         codigo,
         mensaje,
+        tipo,
+        (long long)tamano_contenido,
         allow
     );
 

@@ -8,13 +8,15 @@
 #include <errno.h>
 #include "http.h"
 #include "files.h"
+#include "mime.h"
+#include <sys/sendfile.h>
 
 #define MAX_EVENTOS 20
 #define MAX_CABECERAS 8192
 
 
-typedef struct {int fd;size_t usados;size_t enviados;int respondiendo;char buffer[MAX_CABECERAS];} EstadoCliente;
-// Estructura para almacenar el estado de cada cliente
+typedef struct {int fd;size_t usados;size_t enviados;int respondiendo;char buffer[MAX_CABECERAS];int fd_archivo;off_t tamano_archivo;off_t enviados_archivo;} EstadoCliente;
+
 int main(void) {
     
     int socket_escucha = crear_socket();// Crear el socket de escucha
@@ -101,6 +103,7 @@ int main(void) {
                     }
                     // Guardar el descriptor del cliente
                     estado->fd = cliente;
+                    estado->fd_archivo = -1;
                     // Preparar el evento del cliente
                     struct epoll_event ev_cliente = {0};
                     ev_cliente.events = EPOLLIN;
@@ -136,9 +139,37 @@ int main(void) {
                             break;
                         }
                     }
-                    if (estado->enviados == estado->usados) {
-                        cerrar_cliente = 1;
+
+                    if (!cerrar_cliente && estado->enviados == estado->usados) {
+                        while (estado->enviados_archivo < estado->tamano_archivo) {
+
+                            off_t restantes = estado->tamano_archivo - estado->enviados_archivo;
+                            size_t bloque = restantes > 65536? 65536 : (size_t)restantes;
+                            ssize_t n = sendfile(cliente_fd,estado->fd_archivo,&estado->enviados_archivo,bloque);
+
+                            if (n > 0) {
+                                continue;
+                            }
+                            if (n == -1 && errno == EINTR) {
+                                continue;
+                            }
+                            if (n == -1 &&
+                                (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                                break;
+                            }
+                            if (n == -1) {
+                                perror("sendfile");
+                            } else {
+                                fprintf(stderr, "Archivo incompleto\n");
+                            }
+                            cerrar_cliente = 1;
+                            break;
+                        }
+                        if (estado->enviados_archivo == estado->tamano_archivo) {
+                            cerrar_cliente = 1;
+                        }
                     }
+
                 } else {
                     while (!cerrar_cliente) {
                         
@@ -171,6 +202,9 @@ int main(void) {
 
                                 HttpSolicitud solicitud;
                                 int codigo_http = http_analizar_solicitud(estado->buffer, estado->usados, &solicitud);
+
+                                const char *tipo_mime = "application/octet-stream";
+
                                 printf("Resultado del analisis HTTP: %d\n", codigo_http);
 
                                 if (codigo_http == HTTP_OK) {
@@ -180,12 +214,17 @@ int main(void) {
                                     if (codigo_http == HTTP_OK) {
                                         printf("Archivo encontrado: %s\n", solicitud.ruta);
                                         printf("Tamano del archivo: %lld bytes\n", (long long)tamano_archivo);
-                                        close(fd_archivo);
+                                        estado->fd_archivo = fd_archivo;
+                                        estado->tamano_archivo = tamano_archivo;
+                                        estado->enviados_archivo = 0;
+                                        
+                                        tipo_mime = mime_tipo(solicitud.ruta);
+                                        printf("Tipo MIME detectado: %s\n", tipo_mime);
                                     }
                                 }
                                 printf("Codigo de respuesta HTTP: %d\n", codigo_http);
 
-                                size_t longitud_respuesta = http_construir_respuesta(estado->buffer, sizeof(estado->buffer), codigo_http);
+                                size_t longitud_respuesta = http_construir_respuesta(estado->buffer, sizeof(estado->buffer), codigo_http, codigo_http == HTTP_OK ? estado->tamano_archivo : 0, tipo_mime);
                                 if (longitud_respuesta == 0) {
                                     cerrar_cliente = 1;
                                     break;
@@ -229,6 +268,9 @@ int main(void) {
                     // Retirar el cliente de epoll
                     if (epoll_ctl(epfd,EPOLL_CTL_DEL,cliente_fd,NULL) == -1) {
                         perror("epoll_ctl DEL cliente");
+                    }
+                    if (estado->fd_archivo != -1) {
+                        close(estado->fd_archivo);
                     }
                     close(cliente_fd); // Cerrar el socket del cliente
                     free(estado);// Liberar la memoria del cliente
