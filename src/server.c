@@ -8,8 +8,7 @@ int crear_socket(void) {
 
     struct addrinfo hints = {0};
     struct addrinfo *lista_direcciones = NULL;
-    int resultado, socket_escucha;
-
+    int resultado, socket_escucha;  
     // Configurar las características del socket
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
@@ -20,8 +19,9 @@ int crear_socket(void) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(resultado));
         return -1;
     }
-    // Crear el socket TCP
-    if ( socket(lista_direcciones->ai_family, lista_direcciones->ai_socktype, lista_direcciones ->ai_protocol)== -1) {
+    //Crear el socket TCP
+    socket_escucha = socket(lista_direcciones->ai_family, lista_direcciones->ai_socktype, lista_direcciones->ai_protocol);
+    if (socket_escucha == -1) {
         perror("socket");
         freeaddrinfo(lista_direcciones);
         return -1;

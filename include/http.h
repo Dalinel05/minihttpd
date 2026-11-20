@@ -26,10 +26,7 @@ typedef struct {
     char user_agent[HTTP_MAX_USER_AGENT];
 } HttpSolicitud;
 
-int http_analizar_solicitud(
-    const char *datos,
-    size_t longitud,
-    HttpSolicitud *solicitud
-);
+int http_analizar_solicitud(const char *datos,size_t longitud,HttpSolicitud *solicitud);
+size_t http_construir_respuesta(char *destino, size_t capacidad, int codigo);
 
 #endif
